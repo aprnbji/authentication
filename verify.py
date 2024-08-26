@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import pyrealsense2 as rs
 import face_recognition
+import dlib
 import os
 
 # Initialize the RealSense camera
@@ -11,8 +12,14 @@ config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
 config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
 pipeline.start(config)
 
-# Directory to load face encodings
+# Load the facial landmark predictor
+shape_predictor_path = 'data/shape_predictor/shape_predictor_68_face_landmarks.dat'
+predictor = dlib.shape_predictor(shape_predictor_path)
+detector = dlib.get_frontal_face_detector()
+
+# Directories to load face encodings and landmarks
 encoding_folder = 'data/known_faces/'
+landmarks_folder = 'data/known_landmarks/'
 
 def load_face_encodings(folder):
     """Load all face encodings from the specified folder."""
@@ -23,6 +30,16 @@ def load_face_encodings(folder):
             encoding = np.load(path)
             encodings.append(encoding)
     return encodings
+
+def load_face_landmarks(folder):
+    """Load all facial landmarks from the specified folder."""
+    landmarks = []
+    for filename in os.listdir(folder):
+        if filename.endswith('.npy'):
+            path = os.path.join(folder, filename)
+            landmark = np.load(path)
+            landmarks.append(landmark)
+    return landmarks
 
 def detect_faces(image):
     """Detect faces in an image using a Haar cascade classifier."""
@@ -36,9 +53,15 @@ def get_face_encoding(face_image):
     face_encodings = face_recognition.face_encodings(face_rgb)
     return face_encodings[0] if face_encodings else None
 
+def get_face_landmarks(gray, rect):
+    """Get the facial landmarks for a detected face."""
+    shape = predictor(gray, rect)
+    return np.array([(p.x, p.y) for p in shape.parts()])
+
 def verify_face():
     """Verify faces in real-time and provide feedback."""
     known_encodings = load_face_encodings(encoding_folder)
+    known_landmarks = load_face_landmarks(landmarks_folder)
     
     print("Starting verification...")
     while True:
@@ -46,12 +69,15 @@ def verify_face():
         depth_frame = frames.get_depth_frame()
         color_frame = frames.get_color_frame()
         color_image = np.asanyarray(color_frame.get_data())
+        gray = cv2.cvtColor(color_image, cv2.COLOR_BGR2GRAY)
         
         faces = detect_faces(color_image)
         for (x, y, w, h) in faces:
             face_image = color_image[y:y+h, x:x+w]
             depth = depth_frame.get_distance(x + w//2, y + h//2)
             face_encoding = get_face_encoding(face_image)
+            rect = dlib.rectangle(x, y, x+w, y+h)
+            face_landmarks = get_face_landmarks(gray, rect)
             
             if face_encoding is not None:
                 matches = face_recognition.compare_faces(known_encodings, face_encoding)
@@ -62,6 +88,10 @@ def verify_face():
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
                     cv2.putText(color_image, f"Depth: {depth:.2f}m", (x, y+h+30),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                    
+                    # Draw facial landmarks
+                    for (lx, ly) in face_landmarks:
+                        cv2.circle(color_image, (lx, ly), 2, (255, 0, 0), -1)
                 else:
                     cv2.rectangle(color_image, (x, y), (x+w, y+h), (0, 0, 255), 2)
                     cv2.putText(color_image, "Not recognized", (x, y-10),
