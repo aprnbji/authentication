@@ -2,8 +2,8 @@
 
 **enroll()**
 
-- save face encodings
-- save face landmarks
+- saves face encodings
+- saves face landmarks
 
 **verify()**
 
