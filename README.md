@@ -11,6 +11,7 @@
 - loops through saved entities and see if anything matches.
 - if a match is found, return the name of the person along with the message "verified"(it also checks for
     liveness of the face for further verification to prevent spoofing), otherwise returns "not recognized"
+- if it is verified but the depth is 0m, it returns "not authenticated"
 
 **main()**
 

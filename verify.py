@@ -1,9 +1,4 @@
-import cv2
-import numpy as np
-import pyrealsense2 as rs
-import face_recognition
-import dlib
-import os
+from dependencies import *
 
 # Initialize the RealSense camera
 pipeline = rs.pipeline()
@@ -89,12 +84,19 @@ def verify_face():
                 
                 if matches[best_match_index]:
                     name = known_names[best_match_index]
-                    print(f"Face authenticated: {name}")
-                    cv2.rectangle(color_image, (x, y), (x+w, y+h), (0, 255, 0), 2)
-                    cv2.putText(color_image, f"Verified: {name}", (x, y-10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                    if depth > 0:
+                        status_text = f"Verified: {name}"
+                        box_color = (0, 255, 0)
+                    else:
+                        status_text = "Not authenticated"
+                        box_color = (0, 0, 255)
+
+                    print(f"Face authenticated: {name}, Depth: {depth:.2f}m")
+                    cv2.rectangle(color_image, (x, y), (x+w, y+h), box_color, 2)
+                    cv2.putText(color_image, status_text, (x, y-10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, box_color, 2)
                     cv2.putText(color_image, f"Depth: {depth:.2f}m", (x, y+h+30),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, box_color, 2)
                     
                     # Draw facial landmarks
                     for (lx, ly) in face_landmarks:
