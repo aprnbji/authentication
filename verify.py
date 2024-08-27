@@ -18,18 +18,21 @@ predictor = dlib.shape_predictor(shape_predictor_path)
 detector = dlib.get_frontal_face_detector()
 
 # Directories to load face encodings and landmarks
-encoding_folder = 'data/known_faces/'
-landmarks_folder = 'data/known_landmarks/'
+encoding_folder = 'data/encodings/'
+landmarks_folder = 'data/landmarks/'
 
-def load_face_encodings(folder):
-    """Load all face encodings from the specified folder."""
+def load_face_encodings_and_names(folder):
+    """Load all face encodings and corresponding names from the specified folder."""
     encodings = []
+    names = []
     for filename in os.listdir(folder):
         if filename.endswith('.npy'):
             path = os.path.join(folder, filename)
             encoding = np.load(path)
             encodings.append(encoding)
-    return encodings
+            name = os.path.splitext(filename)[0]  # Assuming file name is the person's name
+            names.append(name)
+    return encodings, names
 
 def load_face_landmarks(folder):
     """Load all facial landmarks from the specified folder."""
@@ -60,7 +63,7 @@ def get_face_landmarks(gray, rect):
 
 def verify_face():
     """Verify faces in real-time and provide feedback."""
-    known_encodings = load_face_encodings(encoding_folder)
+    known_encodings, known_names = load_face_encodings_and_names(encoding_folder)
     known_landmarks = load_face_landmarks(landmarks_folder)
     
     print("Starting verification...")
@@ -81,10 +84,14 @@ def verify_face():
             
             if face_encoding is not None:
                 matches = face_recognition.compare_faces(known_encodings, face_encoding)
-                if True in matches:
-                    print("Face authenticated")
+                face_distances = face_recognition.face_distance(known_encodings, face_encoding)
+                best_match_index = np.argmin(face_distances)
+                
+                if matches[best_match_index]:
+                    name = known_names[best_match_index]
+                    print(f"Face authenticated: {name}")
                     cv2.rectangle(color_image, (x, y), (x+w, y+h), (0, 255, 0), 2)
-                    cv2.putText(color_image, f"Verified", (x, y-10),
+                    cv2.putText(color_image, f"Verified: {name}", (x, y-10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
                     cv2.putText(color_image, f"Depth: {depth:.2f}m", (x, y+h+30),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)

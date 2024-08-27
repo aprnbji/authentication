@@ -18,8 +18,8 @@ predictor = dlib.shape_predictor(shape_predictor_path)
 detector = dlib.get_frontal_face_detector()
 
 # Directory to save face encodings and landmarks
-encoding_folder = 'data/known_faces/'
-landmarks_folder = 'data/known_landmarks/'
+encoding_folder = 'data/encodings/'
+landmarks_folder = 'data/landmarks/'
 os.makedirs(encoding_folder, exist_ok=True)
 os.makedirs(landmarks_folder, exist_ok=True)
 
@@ -52,8 +52,13 @@ def get_face_landmarks(gray, rect):
 
 def enroll_face():
     """Enroll a face and save its encoding and landmarks."""
-    print("Press 's' to capture and save a face encoding and landmarks.")
-    count = 1
+    name = input("Enter the name of the person being enrolled: ").strip()
+    if not name:
+        print("Name cannot be empty.")
+        return
+    
+    print("Press 's' to capture and save the face encoding and landmarks.")
+    
     while True:
         frames = pipeline.wait_for_frames()
         color_frame = frames.get_color_frame()
@@ -68,14 +73,15 @@ def enroll_face():
             face_landmarks = get_face_landmarks(gray, rect)
             
             if face_encoding is not None:
-                encoding_filename = os.path.join(encoding_folder, f'face_{count}.npy')
+                encoding_filename = os.path.join(encoding_folder, f'{name}.npy')
                 save_face_encoding(face_encoding, encoding_filename)
                 
-                landmarks_filename = os.path.join(landmarks_folder, f'landmarks_{count}.npy')
+                landmarks_filename = os.path.join(landmarks_folder, f'{name}_landmarks.npy')
                 save_landmarks(face_landmarks, landmarks_filename)
                 
-                count += 1
-        
+                print(f"{name} has been successfully enrolled.")
+                break  # Exit the loop after saving the face
+
         cv2.imshow('Enroll Face', color_image)
         if cv2.waitKey(1) & 0xFF == ord('s'):
             break
