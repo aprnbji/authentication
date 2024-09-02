@@ -1,5 +1,12 @@
 from dependencies import *
 
+import cv2
+import numpy as np
+import mediapipe as mp
+import pyrealsense2 as rs
+import face_recognition
+import os
+
 # Initialize the RealSense camera
 pipeline = rs.pipeline()
 config = rs.config()
@@ -7,10 +14,11 @@ config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
 config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
 pipeline.start(config)
 
-# Load the facial landmark predictor
-shape_predictor_path = '/home/inlab22/auth/data/shape_predictor/shape_predictor_68_face_landmarks.dat'
-predictor = dlib.shape_predictor(shape_predictor_path)
-detector = dlib.get_frontal_face_detector()
+# Load MediaPipe Face Mesh
+mp_face_mesh = mp.solutions.face_mesh
+mp_drawing = mp.solutions.drawing_utils
+mp_drawing_styles = mp.solutions.drawing_styles
+face_mesh = mp_face_mesh.FaceMesh(max_num_faces=2, refine_landmarks=True, min_detection_confidence=0.7, min_tracking_confidence=0.6)
 
 # Directory to save face encodings and landmarks
 encoding_folder = 'data/encodings/'
@@ -35,10 +43,10 @@ def save_landmarks(landmarks, filename):
         print(f"Error saving facial landmarks: {e}")
 
 def detect_faces(image):
-    """Detect faces in an image using a Haar cascade classifier."""
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    return face_cascade.detectMultiScale(gray, 1.1, 4)
+    """Detect faces in an image using MediaPipe Face Mesh."""
+    img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    results = face_mesh.process(img_rgb)
+    return results
 
 def get_face_encoding(face_image):
     """Get the face encoding for a given face image."""
@@ -46,10 +54,13 @@ def get_face_encoding(face_image):
     face_encodings = face_recognition.face_encodings(face_rgb)
     return face_encodings[0] if face_encodings else None
 
-def get_face_landmarks(gray, rect):
-    """Get the facial landmarks for a detected face."""
-    shape = predictor(gray, rect)
-    return np.array([(p.x, p.y) for p in shape.parts()])
+def get_face_landmarks(results):
+    """Get the facial landmarks from MediaPipe results."""
+    landmarks = []
+    if results.multi_face_landmarks:
+        for face_landmarks in results.multi_face_landmarks:
+            landmarks.extend([(lm.x, lm.y) for lm in face_landmarks.landmark])
+    return np.array(landmarks)
 
 def enroll_face():
     """Enroll a face and save its encoding and landmarks."""
@@ -72,29 +83,61 @@ def enroll_face():
         color_image = np.asanyarray(color_frame.get_data())
         gray = cv2.cvtColor(color_image, cv2.COLOR_BGR2GRAY)
         
-        faces = detect_faces(color_image)
-        if len(faces) == 0:
+        results = detect_faces(color_image)
+        if not results.multi_face_landmarks:
             print("No face detected.")
             continue
 
-        for (x, y, w, h) in faces:
-            face_image = color_image[y:y+h, x:x+w]
-            face_encoding = get_face_encoding(face_image)
-            rect = dlib.rectangle(x, y, x+w, y+h)
-            face_landmarks = get_face_landmarks(gray, rect)
+        for face_landmarks in results.multi_face_landmarks:
+            # Draw face mesh
+            mp_drawing.draw_landmarks(
+                image=color_image,
+                landmark_list=face_landmarks,
+                connections=mp_face_mesh.FACEMESH_TESSELATION,
+                landmark_drawing_spec=None,
+                connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_tesselation_style()
+            )
+
+            mp_drawing.draw_landmarks(
+                image=color_image,
+                landmark_list=face_landmarks,
+                connections=mp_face_mesh.FACEMESH_CONTOURS,
+                landmark_drawing_spec=None,
+                connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_contours_style()
+            )
+
+            mp_drawing.draw_landmarks(
+                image=color_image,
+                landmark_list=face_landmarks,
+                connections=mp_face_mesh.FACEMESH_IRISES,
+                landmark_drawing_spec=None,
+                connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_iris_connections_style()
+            )
+
+            # Extract face landmarks
+            face_landmarks_array = get_face_landmarks(results)
             
             # Check depth at the center of the detected face
-            depth = depth_frame.get_distance(x + w // 2, y + h // 2)
+            x_center = int(color_image.shape[1] / 2)
+            y_center = int(color_image.shape[0] / 2)
+            depth = depth_frame.get_distance(x_center, y_center)
             print(f"Depth at face center: {depth:.2f} meters")
 
-            # Ensure the detected face is within a reasonable depth range (e.g., 0.3m to 1.5m)
-            if 0 <= depth <= 10:
+            # Ensure the detected face is within a reasonable depth range
+            if depth == 0:
+                print("Depth is zero. Cannot enroll.")
+                continue
+
+            if 0 < depth <= 10:
+                face_image = color_image
+                face_encoding = get_face_encoding(face_image)
+                
                 if face_encoding is not None:
                     encoding_filename = os.path.join(encoding_folder, f'{name}.npy')
                     save_face_encoding(face_encoding, encoding_filename)
                     
                     landmarks_filename = os.path.join(landmarks_folder, f'{name}_landmarks.npy')
-                    save_landmarks(face_landmarks, landmarks_filename)
+                    save_landmarks(face_landmarks_array, landmarks_filename)
                     
                     print(f"{name} has been successfully enrolled.")
                     break  # Exit the loop after saving the face
