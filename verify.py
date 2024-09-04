@@ -11,11 +11,16 @@ pipeline.start(config)
 mp_face_mesh = mp.solutions.face_mesh
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
-face_mesh = mp_face_mesh.FaceMesh(max_num_faces=2, refine_landmarks=True, min_detection_confidence=0.7, min_tracking_confidence=0.6)
+face_mesh = mp_face_mesh.FaceMesh(
+    max_num_faces=2,
+    refine_landmarks=True,
+    min_detection_confidence=0.7,
+    min_tracking_confidence=0.6
+)
 
 # Directory for saved landmarks and encodings
-encoding_folder = 'data/encodings/'
-landmarks_folder = 'data/landmarks/'
+ENCODING_DIR = 'data/encodings/'
+LANDMARKS_DIR = 'data/landmarks/'
 
 def load_face_encodings_and_names(folder):
     """Load all face encodings and corresponding names from the specified folder."""
@@ -69,8 +74,8 @@ def calculate_landmark_distance(landmarks1, landmarks2):
 
 def verify_face():
     """Verify faces in real-time and provide feedback."""
-    known_encodings, known_names = load_face_encodings_and_names(encoding_folder)
-    known_landmarks, known_landmark_names = load_face_landmarks(landmarks_folder)
+    known_encodings, known_names = load_face_encodings_and_names(ENCODING_DIR)
+    known_landmarks, known_landmark_names = load_face_landmarks(LANDMARKS_DIR)
     
     print("Starting verification...")
     try:

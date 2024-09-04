@@ -5,3 +5,4 @@ import face_recognition
 import dlib
 import mediapipe as mp
 import os
+from scipy.spatial import distance

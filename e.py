@@ -1,9 +1,4 @@
-import cv2
-import face_recognition
-import numpy as np
-import pyrealsense2 as rs
-import mediapipe as mp
-import os
+from dependencies import *
 
 # Initialize the RealSense camera
 pipeline = rs.pipeline()
@@ -16,35 +11,34 @@ pipeline.start(config)
 mp_face_mesh = mp.solutions.face_mesh
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
-face_mesh = mp_face_mesh.FaceMesh(max_num_faces=2, refine_landmarks=True, min_detection_confidence=0.7, min_tracking_confidence=0.6)
+face_mesh = mp_face_mesh.FaceMesh(
+    max_num_faces=2,
+    refine_landmarks=True,
+    min_detection_confidence=0.7,
+    min_tracking_confidence=0.6
+)
 
-# Directory to save face encodings and landmarks
-encoding_folder = 'data/encodings/'
-landmarks_folder = 'data/landmarks/'
-os.makedirs(encoding_folder, exist_ok=True)
-os.makedirs(landmarks_folder, exist_ok=True)
+# Directory to save known face encodings and landmarks
+ENCODING_DIR = 'data/encodings'
+LANDMARKS_DIR = 'data/landmarks'
+os.makedirs(ENCODING_DIR, exist_ok=True)
+os.makedirs(LANDMARKS_DIR, exist_ok=True)
 
-def save_face_encoding(face_encoding, filename):
+def save_face_encoding(name, face_encoding):
     """Save the face encoding to a file."""
+    filename = os.path.join(ENCODING_DIR, f'{name}.npy')
     try:
         np.save(filename, face_encoding)
         print(f"Face encoding saved to {filename}.")
-        if os.path.exists(filename) and os.path.getsize(filename) > 0:
-            print(f"Successfully verified that {filename} exists and is not empty.")
-        else:
-            print(f"Warning: {filename} does not exist or is empty.")
     except Exception as e:
         print(f"Error saving face encoding: {e}")
 
-def save_landmarks(landmarks, filename):
+def save_landmarks(name, landmarks):
     """Save the facial landmarks to a file."""
+    filename = os.path.join(LANDMARKS_DIR, f'{name}.npy')
     try:
         np.save(filename, landmarks)
         print(f"Facial landmarks saved to {filename}.")
-        if os.path.exists(filename) and os.path.getsize(filename) > 0:
-            print(f"Successfully verified that {filename} exists and is not empty.")
-        else:
-            print(f"Warning: {filename} does not exist or is empty.")
     except Exception as e:
         print(f"Error saving facial landmarks: {e}")
 
@@ -54,29 +48,19 @@ def detect_faces(image):
     results = face_mesh.process(img_rgb)
     return results
 
-def get_face_encoding(face_image):
-    """Get the face encoding for a given face image."""
-    face_rgb = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
-    face_encodings = face_recognition.face_encodings(face_rgb)
-    return face_encodings[0] if face_encodings else None
-
-def get_face_landmarks(results):
-    """Get the facial landmarks from MediaPipe results."""
-    landmarks = []
-    if results.multi_face_landmarks:
-        for face_landmarks in results.multi_face_landmarks:
-            landmarks.extend([(lm.x, lm.y) for lm in face_landmarks.landmark])
-    return np.array(landmarks)
-
-def calculate_avg_depth(face_landmarks, depth_frame, color_image_shape):
-    """Calculate the average depth of the face region."""
+def calculate_depth_variation(face_landmarks, depth_frame, color_image_shape):
+    """Calculate the average depth and variation across the face region."""
     depth_values = []
     for lm in face_landmarks.landmark:
         x = int(lm.x * color_image_shape[1])
         y = int(lm.y * color_image_shape[0])
         depth = depth_frame.get_distance(x, y)
         depth_values.append(depth)
-    return np.mean(depth_values)
+    
+    avg_depth = np.mean(depth_values)
+    depth_variation = np.std(depth_values)
+    
+    return avg_depth, depth_variation
 
 def enroll_face():
     """Enroll a face and save its encoding and landmarks."""
@@ -84,7 +68,7 @@ def enroll_face():
     if not name:
         print("Name cannot be empty.")
         return
-    
+
     print("Press 's' to capture and save the face encoding and landmarks.")
     
     while True:
@@ -97,8 +81,7 @@ def enroll_face():
             continue
 
         color_image = np.asanyarray(color_frame.get_data())
-        gray = cv2.cvtColor(color_image, cv2.COLOR_BGR2GRAY)
-        
+
         # Detect faces using MediaPipe
         results = detect_faces(color_image)
         if not results.multi_face_landmarks:
@@ -131,28 +114,33 @@ def enroll_face():
                 connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_iris_connections_style()
             )
 
-            # Extract face landmarks
-            face_landmarks_array = get_face_landmarks(results)
-            
-            # Calculate the average depth of the face region
-            avg_depth = calculate_avg_depth(face_landmarks, depth_frame, color_image.shape)
+            # Calculate the average depth and depth variation of the face region
+            avg_depth, depth_variation = calculate_depth_variation(face_landmarks, depth_frame, color_image.shape)
             print(f"Average depth of face: {avg_depth:.2f} meters")
+            print(f"Depth variation: {depth_variation:.4f} meters")
 
-            # Ensure the detected face is within a reasonable depth range
-            if avg_depth == 0:
-                print("Depth is zero. Cannot enroll.")
+            # Ensure the detected face is within a reasonable depth range and variation
+            if avg_depth == 0 or depth_variation < 0.01:  # Adjust the threshold as needed
+                print("Depth variation too low. Likely a flat image. Cannot enroll.")
+
+                # Draw a bounding box around the image and display the message
+                height, width, _ = color_image.shape
+                cv2.rectangle(color_image, (10, 10), (width - 10, height - 10), (0, 0, 255), 2)
+                cv2.putText(color_image, "Images cannot be enrolled", 
+                            (50, height - 50), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 
+                            1, (0, 0, 255), 2, cv2.LINE_AA)
                 continue
 
             if 0 < avg_depth <= 7:
                 face_image = color_image
-                face_encoding = get_face_encoding(face_image)
+                face_encoding = face_recognition.face_encodings(face_image)[0] if face_recognition.face_encodings(face_image) else None
                 
                 if face_encoding is not None:
-                    encoding_filename = os.path.join(encoding_folder, f'{name}.npy')
-                    save_face_encoding(face_encoding, encoding_filename)
+                    save_face_encoding(name, face_encoding)
                     
-                    landmarks_filename = os.path.join(landmarks_folder, f'{name}_landmarks.npy')
-                    save_landmarks(face_landmarks_array, landmarks_filename)
+                    face_landmarks_array = np.array([(lm.x, lm.y) for lm in face_landmarks.landmark])
+                    save_landmarks(name, face_landmarks_array)
                     
                     print(f"{name} has been successfully enrolled.")
                     break  # Exit the loop after saving the face

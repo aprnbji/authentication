@@ -67,23 +67,6 @@ def calculate_landmark_distance(landmarks1, landmarks2):
     """Calculate the Euclidean distance between two sets of landmarks."""
     return np.linalg.norm(landmarks1 - landmarks2)
 
-def make_square_bounding_box(x_min, y_min, x_max, y_max):
-    """Adjust bounding box to be a square."""
-    width = x_max - x_min
-    height = y_max - y_min
-    size = max(width, height)
-
-    x_center = x_min + width // 2
-    y_center = y_min + height // 2
-
-    half_size = size // 2
-    x_min_square = x_center - half_size
-    y_min_square = y_center - half_size
-    x_max_square = x_center + half_size
-    y_max_square = y_center + half_size
-
-    return x_min_square, y_min_square, x_max_square, y_max_square
-
 def verify_face():
     """Verify faces in real-time and provide feedback."""
     known_encodings, known_names = load_face_encodings_and_names(encoding_folder)
@@ -100,7 +83,6 @@ def verify_face():
                 continue
 
             color_image = np.asanyarray(color_frame.get_data())
-            depth_image = np.asanyarray(depth_frame.get_data())
             
             results = detect_faces(color_image)
             if results.multi_face_landmarks:
@@ -121,24 +103,21 @@ def verify_face():
                     y_min = int(min([lm.y for lm in bbox]) * color_image.shape[0])
                     y_max = int(max([lm.y for lm in bbox]) * color_image.shape[0])
 
-                    # Make the bounding box square
-                    x_min, y_min, x_max, y_max = make_square_bounding_box(x_min, y_min, x_max, y_max)
-
                     # Check depth at each landmark and calculate the average depth
                     depths = []
                     for lm in face_landmarks.landmark:
                         x = int(lm.x * color_image.shape[1])
                         y = int(lm.y * color_image.shape[0])
-                        depth = depth_image[y, x]
+                        depth = depth_frame.get_distance(x, y)
                         if depth > 0:  # Ensure valid depth
                             depths.append(depth)
                     
                     if depths:
-                        avg_depth = np.mean(depths) / 1000.0  # Convert from mm to meters
+                        avg_depth = np.mean(depths)
                         print(f"Average depth of face: {avg_depth:.2f} meters")
 
                         # Ensure the detected face is within a reasonable depth range
-                        if 0 < avg_depth <= 1.0:  # Assuming depth in meters
+                        if 0 < avg_depth <= 7:
                             face_image = color_image[y_min:y_max, x_min:x_max]
                             face_encoding = get_face_encoding(face_image)
                             face_landmarks_array = np.array(face_landmarks.landmark)
@@ -152,15 +131,17 @@ def verify_face():
                                     name = known_names[best_match_index]
                                     status_text = f"Verified: {name}"
                                     box_color = (0, 255, 0)
+                                    depth_text = f"Depth: {avg_depth:.2f}m"
                                 else:
-                                    status_text = "Unknown"
+                                    status_text = "Not recognized"
                                     box_color = (0, 0, 255)
+                                    depth_text = f"Depth: {avg_depth:.2f}m"
 
-                                print(f"Face authenticated: {name}, Depth: {avg_depth:.2f} meters")
+                                print(f"Face authenticated: {name}, Depth: {avg_depth:.2f}m")
                             else:
                                 # Fallback to landmarks if encoding is not available
                                 min_distance = float('inf')
-                                matched_name = "Unknown"
+                                matched_name = "Not recognized"
                                 
                                 for i, known_landmark in enumerate(known_landmarks):
                                     if face_landmarks_array.shape == known_landmark.shape:
@@ -168,33 +149,28 @@ def verify_face():
                                         if dist < min_distance:
                                             min_distance = dist
                                             matched_name = known_landmark_names[i]
+                                    else:
+                                        print(f"Landmark shape mismatch: face {face_landmarks_array.shape} vs known {known_landmark.shape}")
 
                                 threshold = 1  # Adjust this threshold as needed
                                 if min_distance < threshold:
                                     status_text = f"Verified: {matched_name}"
                                     box_color = (0, 255, 0)
                                 else:
-                                    status_text = "Unknown"
+                                    status_text = "Not recognized"
                                     box_color = (0, 0, 255)
 
-                                print(f"Face verified by landmarks: {matched_name}, Depth: {avg_depth:.2f} meters")
+                                depth_text = f"Depth: {avg_depth:.2f}m"
+                                print(f"Face verified by landmarks: {matched_name}, Depth: {avg_depth:.2f}m")
                                 
                             # Draw bounding box and status text
                             cv2.rectangle(color_image, (x_min, y_min), (x_max, y_max), box_color, 2)
                             cv2.putText(color_image, status_text, (x_min, y_min-10),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, box_color, 2)
-                            cv2.putText(color_image, f"Depth: {avg_depth:.2f} meters", (x_min, y_max+30),
+                            cv2.putText(color_image, depth_text, (x_min, y_max+30),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, box_color, 2)
                         else:
-                            # If depth is out of range, mark it as not authenticated
-                            status_text = "Not Authenticated"
-                            box_color = (0, 255, 255)
-                            cv2.rectangle(color_image, (x_min, y_min), (x_max, y_max), box_color, 2)
-                            cv2.putText(color_image, status_text, (x_min, y_min-10),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, box_color, 2)
-                            cv2.putText(color_image, f"Depth: {avg_depth:.2f} meters", (x_min, y_max+30),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, box_color, 2)
-                            print(f"Face detected but not within depth range.")
+                            print("Face detected but not within depth range.")
             cv2.imshow('RealSense', color_image)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
@@ -203,4 +179,5 @@ def verify_face():
         pipeline.stop()
         cv2.destroyAllWindows()
 
-verify_face()
+if __name__ == "__main__":
+    verify_face()
