@@ -146,7 +146,7 @@ def enroll_face():
                     encoding_filename = os.path.join(encoding_folder, f'{name}.npy')
                     save_face_encoding(face_encoding, encoding_filename)
                     
-                    landmarks_filename = os.path.join(landmarks_folder, f'{name}_landmarks.npy')
+                    landmarks_filename = os.path.join(landmarks_folder, f'{name}.npy')
                     save_landmarks(face_landmarks_array, landmarks_filename)
                     
                     print(f"{name} has been successfully enrolled.")
