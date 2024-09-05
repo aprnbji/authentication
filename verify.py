@@ -1,4 +1,9 @@
-from dependencies import *
+import cv2
+import numpy as np
+import pyrealsense2 as rs
+import face_recognition
+import dlib
+import os
 
 # Initialize the RealSense camera
 pipeline = rs.pipeline()
@@ -7,174 +12,100 @@ config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
 config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
 pipeline.start(config)
 
-# Initialize MediaPipe Face Mesh
-mp_face_mesh = mp.solutions.face_mesh
-mp_drawing = mp.solutions.drawing_utils
-mp_drawing_styles = mp.solutions.drawing_styles
-face_mesh = mp_face_mesh.FaceMesh(
-    max_num_faces=2,
-    refine_landmarks=True,
-    min_detection_confidence=0.7,
-    min_tracking_confidence=0.6
-)
+# Load the facial landmark predictor
+shape_predictor_path = 'data/shape_predictor/shape_predictor_68_face_landmarks.dat'
+predictor = dlib.shape_predictor(shape_predictor_path)
+detector = dlib.get_frontal_face_detector()
 
-# Directory for saved landmarks and encodings
-ENCODING_DIR = 'data/encodings/'
-LANDMARKS_DIR = 'data/landmarks/'
+# Directories to load face encodings and landmarks
+encoding_folder = 'data/encodings/'
+landmarks_folder = 'data/landmarks/'
 
-def load_face_encodings(folder):
+def load_face_encodings_and_names(folder):
     """Load all face encodings and corresponding names from the specified folder."""
     encodings = []
     names = []
     for filename in os.listdir(folder):
-        if filename.endswith('.npy'):
+        if filename.endswith('_encoding.npy'):
             path = os.path.join(folder, filename)
             encoding = np.load(path)
             encodings.append(encoding)
-            name = os.path.splitext(filename)[0]
+            name = filename.split('_')[0]  # Extract name from filename
             names.append(name)
     return encodings, names
 
 def load_face_landmarks(folder):
     """Load all facial landmarks from the specified folder."""
     landmarks = []
-    names = []
     for filename in os.listdir(folder):
-        if filename.endswith('.npy'):
+        if filename.endswith('_landmarks.npy'):
             path = os.path.join(folder, filename)
             landmark = np.load(path)
             landmarks.append(landmark)
-            name = os.path.splitext(filename)[0]
-            names.append(name)
-    return landmarks, names
+    return landmarks
 
 def detect_faces(image):
-    """Detect faces in an image using MediaPipe Face Mesh."""
-    img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    results = face_mesh.process(img_rgb)
-    return results
+    """Detect faces in an image using a Haar cascade classifier."""
+    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return face_cascade.detectMultiScale(gray, 1.1, 4)
 
-def calculate_depth_variation(face_landmarks, depth_frame, color_image_shape):
-    """Calculate the average depth and variation across the face region."""
-    depth_values = []
-    for lm in face_landmarks.landmark:
-        x = int(lm.x * color_image_shape[1])
-        y = int(lm.y * color_image_shape[0])
-        depth = depth_frame.get_distance(x, y)
-        depth_values.append(depth)
-    
-    avg_depth = np.mean(depth_values)
-    depth_variation = np.std(depth_values)
-    
-    return avg_depth, depth_variation
+def get_face_encoding(face_image):
+    """Get the face encoding for a given face image."""
+    face_rgb = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
+    face_encodings = face_recognition.face_encodings(face_rgb)
+    return face_encodings[0] if face_encodings else None
+
+def get_face_landmarks(gray, rect):
+    """Get the facial landmarks for a detected face."""
+    shape = predictor(gray, rect)
+    return np.array([(p.x, p.y) for p in shape.parts()])
 
 def verify_face():
     """Verify faces in real-time and provide feedback."""
-    known_encodings, known_names = load_face_encodings(ENCODING_DIR)
-    known_landmarks, known_landmark_names = load_face_landmarks(LANDMARKS_DIR)
-    
+    known_encodings, known_names = load_face_encodings_and_names(encoding_folder)
+    known_landmarks = load_face_landmarks(landmarks_folder)
+
     print("Starting verification...")
-    try:
-        while True:
-            frames = pipeline.wait_for_frames()
-            depth_frame = frames.get_depth_frame()
-            color_frame = frames.get_color_frame()
+    while True:
+        frames = pipeline.wait_for_frames()
+        color_frame = frames.get_color_frame()
+        color_image = np.asanyarray(color_frame.get_data())
+        gray = cv2.cvtColor(color_image, cv2.COLOR_BGR2GRAY)
 
-            if not depth_frame or not color_frame:
-                continue
+        faces = detector(gray)
+        for face in faces:
+            (x, y, w, h) = (face.left(), face.top(), face.width(), face.height())
+            face_image = color_image[y:y+h, x:x+w]
+            face_encoding = get_face_encoding(face_image)
+            rect = dlib.rectangle(x, y, x+w, y+h)
+            face_landmarks = get_face_landmarks(gray, rect)
 
-            color_image = np.asanyarray(color_frame.get_data())
-            
-            results = detect_faces(color_image)
-            if not results.multi_face_landmarks:
-                print("No face detected.")
-                continue
+            if face_encoding is not None:
+                matches = face_recognition.compare_faces(known_encodings, face_encoding)
+                face_distances = face_recognition.face_distance(known_encodings, face_encoding)
+                best_match_index = np.argmin(face_distances)
+                
+                if True in matches:
+                    name = known_names[best_match_index]
+                    print(f"Face authenticated: {name}")
+                    cv2.rectangle(color_image, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                    cv2.putText(color_image, f"Verified: {name}", (x, y-10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
 
-            for face_landmarks in results.multi_face_landmarks:
-                # Draw landmarks
-                mp_drawing.draw_landmarks(
-                    image=color_image,
-                    landmark_list=face_landmarks,
-                    connections=mp_face_mesh.FACEMESH_TESSELATION,
-                    landmark_drawing_spec=None,
-                    connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_tesselation_style()
-                )
-
-                # Calculate average depth and depth variation
-                avg_depth, depth_variation = calculate_depth_variation(face_landmarks, depth_frame, color_image.shape)
-                print(f"Average depth: {avg_depth:.2f} meters, Depth variation: {depth_variation:.4f} meters")
-
-                # Check if depth variation is too low
-                if avg_depth == 0 or depth_variation < 0.07:
-                    print("Depth variation too low. Likely a flat image. Cannot verify.")
-                    # Draw bounding box and display the message
-                    height, width, _ = color_image.shape
-                    cv2.rectangle(color_image, (10, 10), (width - 10, height - 10), (0, 0, 255), 2)
-                    cv2.putText(color_image, "Images can't be authenticated", 
-                                (50, height - 50), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 
-                                1, (0, 0, 255), 2, cv2.LINE_AA)
-                    continue
-
-                if 0 < avg_depth <= 7:
-                    face_image = color_image
-                    face_encoding = face_recognition.face_encodings(face_image)[0] if face_recognition.face_encodings(face_image) else None
-                    
-                    if face_encoding is not None:
-                        matches = face_recognition.compare_faces(known_encodings, face_encoding)
-                        face_distances = face_recognition.face_distance(known_encodings, face_encoding)
-                        best_match_index = np.argmin(face_distances)
-                        
-                        if matches[best_match_index]:
-                            name = known_names[best_match_index]
-                            status_text = f"Verified: {name}"
-                            box_color = (0, 255, 0)
-                        else:
-                            status_text = "Not recognized"
-                            box_color = (0, 0, 255)
-
-                        print(f"Face authenticated by encoding: {name}, Depth: {avg_depth:.2f}m")
-                    else:
-                        # Fallback to landmarks if encoding is not available
-                        min_distance = float('inf')
-                        matched_name = "Not recognized"
-                        
-                        for i, known_landmark in enumerate(known_landmarks):
-                            face_landmarks_array = np.array([(lm.x, lm.y) for lm in face_landmarks.landmark])
-                            if face_landmarks_array.shape == known_landmark.shape:
-                                dist = np.linalg.norm(face_landmarks_array - known_landmark)
-                                if dist < min_distance:
-                                    min_distance = dist
-                                    matched_name = known_landmark_names[i]
-
-                        threshold = 0.05  # Adjust this threshold as needed
-                        if min_distance < threshold:
-                            status_text = f"Verified: {matched_name}"
-                            box_color = (0, 255, 0)
-                        else:
-                            status_text = "Not recognized"
-                            box_color = (0, 0, 255)
-
-                        print(f"Face verified by landmarks: {matched_name}, Depth: {avg_depth:.2f}m")
-
-                    # Draw bounding box and status text
-                    x_min = int(min([lm.x for lm in face_landmarks.landmark]) * color_image.shape[1])
-                    y_min = int(min([lm.y for lm in face_landmarks.landmark]) * color_image.shape[0])
-                    x_max = int(max([lm.x for lm in face_landmarks.landmark]) * color_image.shape[1])
-                    y_max = int(max([lm.y for lm in face_landmarks.landmark]) * color_image.shape[0])
-                    cv2.rectangle(color_image, (x_min, y_min), (x_max, y_max), box_color, 2)
-                    cv2.putText(color_image, status_text, (x_min, y_min-10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, box_color, 2)
+                    # Draw facial landmarks
+                    for (lx, ly) in face_landmarks:
+                        cv2.circle(color_image, (lx, ly), 2, (255, 0, 0), -1)
                 else:
-                    print("Face detected but not within the acceptable depth range.")
+                    cv2.rectangle(color_image, (x, y), (x+w, y+h), (0, 0, 255), 2)
+                    cv2.putText(color_image, "Not recognized", (x, y-10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
 
-            cv2.imshow('RealSense', color_image)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-    finally:
-        # Ensure the pipeline is properly stopped when done
-        pipeline.stop()
-        cv2.destroyAllWindows()
+        cv2.imshow('RealSense', color_image)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
 if __name__ == "__main__":
     verify_face()
+    pipeline.stop()
+    cv2.destroyAllWindows()
