@@ -1,35 +1,23 @@
-import cv2
-import numpy as np
-import pyrealsense2 as rs
-import face_recognition
-import dlib
-import os
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
-from tensorflow.keras.preprocessing.image import img_to_array
-from tensorflow.keras.models import load_model
+from dependencies import *
 
-# Initialize the RealSense camera
+# RealSense camera
 pipeline = rs.pipeline()
 config = rs.config()
 config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
 config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
 pipeline.start(config)
 
-# Load the facial landmark predictor
 shape_predictor_path = '/home/inlab22/auth/data/shape_predictor/shape_predictor_68_face_landmarks.dat'
 predictor = dlib.shape_predictor(shape_predictor_path)
 detector = dlib.get_frontal_face_detector()
 
-# Directories to load face encodings and landmarks
 encoding_folder = 'data/encodings/'
 landmarks_folder = 'data/landmarks/'
 
-# Load the face mask detector model
 mask_detector_path = "/home/inlab22/auth/face_mask/mask_detector.model"
 mask_net = load_model(mask_detector_path)
 
 def load_face_encodings_and_names(folder):
-    """Load all face encodings and corresponding names from the specified folder."""
     encodings = []
     names = []
     for filename in os.listdir(folder):
@@ -42,7 +30,6 @@ def load_face_encodings_and_names(folder):
     return encodings, names
 
 def load_face_landmarks(folder):
-    """Load all facial landmarks from the specified folder."""
     landmarks = []
     for filename in os.listdir(folder):
         if filename.endswith('_landmarks.npy'):
@@ -52,24 +39,20 @@ def load_face_landmarks(folder):
     return landmarks
 
 def detect_faces(image):
-    """Detect faces in an image using a Haar cascade classifier."""
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     return face_cascade.detectMultiScale(gray, 1.1, 4)
 
 def get_face_encoding(face_image):
-    """Get the face encoding for a given face image."""
     face_rgb = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
     face_encodings = face_recognition.face_encodings(face_rgb)
     return face_encodings[0] if face_encodings else None
 
 def get_face_landmarks(gray, rect):
-    """Get the facial landmarks for a detected face."""
     shape = predictor(gray, rect)
     return np.array([(p.x, p.y) for p in shape.parts()])
 
 def calculate_depth_statistics(depth_frame, rect):
-    """Calculate depth statistics for a detected face."""
     depth_image = np.asanyarray(depth_frame.get_data())
     x, y, w, h = rect.left(), rect.top(), rect.width(), rect.height()
     face_depths = [depth_frame.get_distance(x + i, y + j) for i in range(w) for j in range(h) if depth_frame.get_distance(x + i, y + j) > 0]
@@ -82,7 +65,6 @@ def calculate_depth_statistics(depth_frame, rect):
         return None, None, []
 
 def detect_mask(face_image):
-    """Detect if a face is wearing a mask."""
     face = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
     face = cv2.resize(face, (224, 224))
     face = img_to_array(face)
@@ -93,7 +75,6 @@ def detect_mask(face_image):
     return "Mask" if mask > withoutMask else "No Mask"
 
 def verify_face():
-    """Verify faces in real-time and provide feedback."""
     known_encodings, known_names = load_face_encodings_and_names(encoding_folder)
     known_landmarks = load_face_landmarks(landmarks_folder)
 
@@ -119,7 +100,7 @@ def verify_face():
 
             avg_depth, depth_variation, face_depths = calculate_depth_statistics(depth_frame, rect)
             
-            # Detect mask
+            #mask
             mask_status = detect_mask(face_image)
 
             if face_encoding is not None:
@@ -128,7 +109,7 @@ def verify_face():
                 best_match_index = np.argmin(face_distances)
 
                 if True in matches:
-                    if avg_depth is None or depth_variation < 0.09:  # Threshold for differentiating between 2D and 3D objects
+                    if avg_depth is None or depth_variation < 0.09: #threshold for depth
                         cv2.rectangle(color_image, (x, y), (x+w, y+h), (0, 0, 255), 2)
                         cv2.putText(color_image, "Images can't be authenticated", (x, y-10),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
@@ -138,8 +119,7 @@ def verify_face():
                         cv2.rectangle(color_image, (x, y), (x+w, y+h), (0, 255, 0), 2)
                         cv2.putText(color_image, f"Verified: {name} ({mask_status})", (x, y-10),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-
-                        # Draw facial landmarks
+                        
                         for (lx, ly) in face_landmarks:
                             cv2.circle(color_image, (lx, ly), 2, (255, 0, 0), -1)
                 else:
@@ -147,7 +127,6 @@ def verify_face():
                     cv2.putText(color_image, f"Not recognized ({mask_status})", (x, y-10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
 
-            # Display depth information in the terminal
             if avg_depth is not None:
                 print(f'Depth Statistics - Avg Depth: {avg_depth:.3f} meters, Depth Variation: {depth_variation:.3f} meters')
 
