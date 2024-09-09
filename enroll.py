@@ -45,15 +45,32 @@ def get_face_landmarks(gray, rect):
     shape = predictor(gray, rect)
     return np.array([(p.x, p.y) for p in shape.parts()])
 
+def calculate_depth_statistics(depth_frame, rect):
+    """Calculate depth statistics for a detected face."""
+    depth_image = np.asanyarray(depth_frame.get_data())
+    x, y, w, h = rect.left(), rect.top(), rect.width(), rect.height()
+    face_depths = [depth_frame.get_distance(x + i, y + j) for i in range(w) for j in range(h) if depth_frame.get_distance(x + i, y + j) > 0]
+    
+    if face_depths:
+        avg_depth = np.mean(face_depths)
+        depth_variation = np.std(face_depths)
+        return avg_depth, depth_variation
+    else:
+        return None, None
+
 def enroll_face():
     """Enroll a face and save its encoding and landmarks."""
-    person_name = input("Enter the name of the person being enrolled: ").strip()
+    person_name = input("Enter the name of the person being enrolled(make sure you are not wearing a mask): ").strip()
     print("Press 's' to capture and save a face encoding and landmarks.")
     
-    count = 1
     while True:
         frames = pipeline.wait_for_frames()
+        depth_frame = frames.get_depth_frame()
         color_frame = frames.get_color_frame()
+
+        if not depth_frame or not color_frame:
+            continue
+
         color_image = np.asanyarray(color_frame.get_data())
         gray = cv2.cvtColor(color_image, cv2.COLOR_BGR2GRAY)
         
@@ -64,15 +81,20 @@ def enroll_face():
             rect = dlib.rectangle(x, y, x+w, y+h)
             face_landmarks = get_face_landmarks(gray, rect)
             
-            if face_encoding is not None:
-                encoding_filename = os.path.join(encoding_folder, f'{person_name}_encoding.npy')
-                save_face_encoding(face_encoding, encoding_filename)
+            avg_depth, depth_variation = calculate_depth_statistics(depth_frame, rect)
+            
+            if face_encoding is not None and avg_depth is not None:
+                if depth_variation < 0.01:  # Threshold for differentiating between 2D and 3D objects
+                    cv2.rectangle(color_image, (x, y), (x+w, y+h), (0, 0, 255), 2)
+                    cv2.putText(color_image, "Images can't be enrolled", (x, y-10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
+                else:
+                    encoding_filename = os.path.join(encoding_folder, f'{person_name}_encoding.npy')
+                    save_face_encoding(face_encoding, encoding_filename)
+                    
+                    landmarks_filename = os.path.join(landmarks_folder, f'{person_name}_landmarks.npy')
+                    save_landmarks(face_landmarks, landmarks_filename)
                 
-                landmarks_filename = os.path.join(landmarks_folder, f'{person_name}_landmarks.npy')
-                save_landmarks(face_landmarks, landmarks_filename)
-                
-                count += 1
-        
         cv2.imshow('Enroll Face', color_image)
         if cv2.waitKey(1) & 0xFF == ord('s'):
             break
