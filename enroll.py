@@ -51,7 +51,7 @@ def calculate_depth_statistics(depth_frame, rect):
         return None, None
 
 def enroll_face():
-    person_name = input("Enter the name of the person being enrolled: ").strip()
+    name = input("Enter the name of the person being enrolled: ").strip()
     print("Press 's' to capture and save a face encoding and landmarks.")
     
     while True:
@@ -80,10 +80,10 @@ def enroll_face():
                     cv2.putText(color_image, "Images can't be enrolled", (x, y-10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
                 else:
-                    encoding_filename = os.path.join(encoding_folder, f'{person_name}.npy')
+                    encoding_filename = os.path.join(encoding_folder, f'{name}.npy')
                     save_face_encoding(face_encoding, encoding_filename)
                     
-                    landmarks_filename = os.path.join(landmarks_folder, f'{person_name}.npy')
+                    landmarks_filename = os.path.join(landmarks_folder, f'{name}.npy')
                     save_landmarks(face_landmarks, landmarks_filename)
                 
         cv2.imshow('Enroll Face', color_image)
